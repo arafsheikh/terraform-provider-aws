@@ -515,6 +515,44 @@ func TestAccAWSMskCluster_LoggingInfo(t *testing.T) {
 	})
 }
 
+func TestAccAWSMskCluster_KafkaVersionUpdate(t *testing.T) {
+	var cluster1, cluster2 kafka.ClusterInfo
+	rName := acctest.RandomWithPrefix("tf-acc-test")
+	resourceName := "aws_msk_cluster.test"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t); testAccPreCheckAWSMsk(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckMskClusterDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccMskClusterConfigKafkaVersion(rName, "2.2.1"),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckMskClusterExists(resourceName, &cluster1),
+					resource.TestCheckResourceAttr(resourceName, "kafka_version", "2.2.1"),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{
+					"bootstrap_brokers",     // API may mutate ordering and selection of brokers to return
+					"bootstrap_brokers_tls", // API may mutate ordering and selection of brokers to return
+				},
+			},
+			{
+				Config: testAccMskClusterConfigKafkaVersion(rName, "2.4.1.1"),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckMskClusterExists(resourceName, &cluster2),
+					testAccCheckMskClusterNotRecreated(&cluster1, &cluster2),
+					resource.TestCheckResourceAttr(resourceName, "kafka_version", "2.4.1.1"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccAWSMskCluster_Tags(t *testing.T) {
 	var cluster kafka.ClusterInfo
 	var td kafka.ListTagsForResourceOutput
@@ -1102,6 +1140,29 @@ resource "aws_msk_cluster" "test" {
   }
 }
 `, rName, cloudwatchLogsEnabled, cloudwatchLogsLogGroup, firehoseEnabled, firehoseDeliveryStream, s3Enabled, s3Bucket)
+}
+
+func testAccMskClusterConfigKafkaVersion(rName string, kafkaVersion string) string {
+	return testAccMskClusterBaseConfig() + fmt.Sprintf(`
+resource "aws_msk_cluster" "test" {
+  cluster_name           = %[1]q
+  kafka_version          = %[2]q
+  number_of_broker_nodes = 3
+
+  encryption_info {
+    encryption_in_transit {
+      client_broker = "TLS_PLAINTEXT"
+    }
+  }
+
+  broker_node_group_info {
+    client_subnets  = ["${aws_subnet.example_subnet_az1.id}", "${aws_subnet.example_subnet_az2.id}", "${aws_subnet.example_subnet_az3.id}"]
+    ebs_volume_size = 10
+    instance_type   = "kafka.m5.large"
+    security_groups = ["${aws_security_group.example_sg.id}"]
+  }
+}
+`, rName, kafkaVersion)
 }
 
 func testAccMskClusterConfigTags1(rName string) string {
